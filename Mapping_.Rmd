@@ -1,0 +1,204 @@
+---
+title: "Mapping Assignment"
+author: "Zhen Sha, JungHwa Yeom, Zixuan Liu"
+date: "10/28/2020"
+output: pdf_document
+---
+# Loading Packages
+Packages that we use
+```{r, warning=FALSE, message=FALSE}
+knitr::opts_chunk$set(echo = TRUE, results=FALSE, message=FALSE)
+library(tidyverse)
+library(drat)
+library(hurricaneexposuredata)
+library(hurricaneexposure)
+library(tmap)
+library(sp)
+library(sf)
+library(maps)
+library(rmarkdown)
+library(knitr)
+library(usmap)
+library(maps)
+library(tmaptools)
+library(dplyr)
+library(tidyr)
+library(drat)
+library(ggplot2)
+library(rgdal)
+```
+
+# Introduction
+Mapping assignment is to reproduce the Floyd-1999 and Allison-2001 hurricane maps by using  hurricaneexposure package.
+The first map for Floyd-1999 and Allison-2001.
+We are trying 2 different methods to form two maps like this.
+
+```{r, message=FALSE, results=FALSE, warning=FALSE}
+# sample map for Floyd-1999
+map_counties(storm = "Floyd-1999", metric = "rainfall") +
+    ggtitle("Floyd-1999") +
+    theme(plot.title = element_text(hjust = 0.5))
+
+# sample map for Allison-2001
+map_rain_exposure(storm ="Allison-2001", 
+                  rain_limit = 175, 
+                  dist_limit = 500, 
+                  days_included =-5:3) +
+    ggtitle("Allison-2001") +
+    theme(plot.title = element_text(hjust = 0.5))
+```
+
+# Using ggplot
+
+```{r, warning=FALSE}
+#read map data
+data(county.fips)
+library(maps)
+ob = st_as_sf(map('county',plot=F,fill=T))
+colnames(county.fips)[2]=colnames(ob)[1]
+ob = left_join(ob,county.fips,'ID')
+```
+
+
+```{r, warning=FALSE}
+#filter data for Floyd-1999 and right join two datasets together
+floyd_track <- force(hurr_tracks)%>% filter(storm_id=='Floyd-1999')
+floyd_rain=force(rain)%>% filter(storm_id=='Floyd-1999')%>% group_by(fips) %>%
+  mutate(fips=as.numeric(fips)) %>% 
+  summarise(storm_id=storm_id[1],precip=sum(precip))
+floyd_rain=right_join(ob,floyd_rain,'fips')
+
+```
+
+ggplot2 for Floyd-1999
+
+```{r, warning=FALSE}
+#ggplot2 mapping
+ggplot()+ ggtitle("Floyd-1999") +
+  geom_sf(data=floyd_rain,mapping=aes(fill=precip))+
+  scale_fill_steps(low='white',high='purple',name='Rainfall (mm)')+
+  geom_path(data=floyd_track,mapping=aes(x=longitude,y=latitude))+
+  theme(plot.title=element_text(hjust=0.3))
+```
+
+Allison-2001 Map
+
+```{r, warning=FALSE}
+#filter data for Allison-2001 and right join datasets together
+allison_track=force(hurr_tracks)%>% filter(storm_id=='Allison-2001')
+allison_rain=force(rain)%>% filter(storm_id=='Allison-2001')%>% group_by(fips) %>%
+  mutate(fips=as.numeric(fips)) %>%
+  summarise(storm_id=storm_id[1],precip=sum(precip))
+allison_rain=right_join(ob,allison_rain,'fips')
+```
+
+
+```{r, warning=FALSE}
+#select Allison with storm_dist<500 & rainfall>175
+
+allison_rain$'Rainfall > 175mm' <- cut(allison_rain$precip,c(-1,175,500),c("Unexposed","Exposed"),ordered_result = T)
+
+
+```
+
+ggplot2 mapping for Allison-2001
+
+```{r, warning=FALSE}
+ggplot()+  ggtitle("Allison-2001")+
+  
+  geom_sf(data=allison_rain,mapping=aes(fill=`Rainfall > 175mm`))
+  geom_sf(data=allison_rain)+
+  geom_path(data=allison_track,mapping=aes(x=longitude,y=latitude))+
+  theme(plot.title=element_text(hjust=0.3))
+```
+
+
+# Using tmap
+The second map for Floyd-1999 with tmap
+Get hurr_tracks data and rain data for both Floyd-1999 and Allison-2001
+
+```{r, warning=FALSE}
+#get data
+addRepo("geanders")
+
+data("hurr_tracks")
+
+data("rain")
+
+head(hurr_tracks)
+
+head(rain)
+```
+
+Getting data and filter for mapping Floyd-1999
+
+```{r, warning=FALSE}
+# get map data
+ob <- st_as_sf(map('county',plot=F,fill=T))
+colnames(county.fips)[2] = 'ID'
+ob <- merge(ob, county.fips, by="ID")
+
+# filter Floyd-1999 in hurr_tracks data and rain data
+dt <- hurr_tracks %>% filter(storm_id == "Floyd-1999")
+
+ra <- rain %>% filter(storm_id == "Floyd-1999") %>% group_by(fips) %>%
+  summarise('storm_id'=storm_id[1],'precip'=sum(precip))
+ra$fips <- as.numeric(ra$fips)
+
+#merge data by fips variable
+ra <- merge(ob, ra,by="fips")
+
+Floyd <- cbind(dt$longitude,dt$latitude)%>%
+  Line()%>%Lines(ID='Floyd-1999')%>%
+  list()%>%SpatialLines()
+```
+
+Plotting tmap for Floyd-1999
+
+```{r, warning=FALSE}
+#Plot tmap
+t_F = tm_shape(ra)+
+  tm_polygons(col='precip',title="Rainfall (mm)")+
+  tm_legend(position=c("right","bottom"))+
+  tm_shape(Floyd)+
+  tm_lines(col='red')+
+  tm_layout(main.title='Floyd-1999',main.title.position = "center") 
+t_F
+```
+
+Reproducing the second map for Allison-2001 with tmap
+Getting data and filter for mapping Allison-2001
+
+```{r, warning=FALSE}
+# get map data
+dt <- hurr_tracks %>% filter(storm_id == "Allison-2001")
+
+ra <- rain %>% filter(storm_id == "Allison-2001") %>% group_by(fips) %>%
+  summarise(storm_id=storm_id[1],precip=sum(precip))
+ra.new <- as.data.frame(ra)
+ra.new$precip[ra.new$precip<=175] <- 'Unexposed'
+ra.new$precip[ra.new$precip != "Unexposed"] <- 'Exposed'
+
+ra.new$fips <- as.numeric(ra.new$fips)
+
+# merge data by fips variable
+
+ra.new <- merge(ob, ra.new,by="fips")
+
+Allison <- cbind(dt$longitude,dt$latitude)%>%
+  Line()%>%Lines(ID='Allison-2001')%>%
+  list()%>%SpatialLines()
+```
+
+Plotting tmap for Allison-2001
+
+```{r, warning=FALSE}
+#Plotting tmap
+t_F = tm_shape(ra.new)+
+  tm_polygons(col='precip',title="Rain > 175 (mm)", style="pretty")+
+  tm_legend(position=c("right","bottom"))+
+  tm_shape(Allison)+
+  tm_lines(col='red')+
+  tm_layout(main.title='Allison-2001',main.title.position="center")
+t_F
+```
